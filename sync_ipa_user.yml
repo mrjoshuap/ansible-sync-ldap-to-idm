@@ -1,0 +1,39 @@
+# This playbook utilizes the community.general collection
+#
+# To install it use: ansible-galaxy collection install community.general.
+
+
+# References
+# * https://docs.ansible.com/ansible/2.9/collections/community/general/ipa_user_module.html#ansible-collections-community-general-ipa-user-module
+
+# - debug:
+#     msg: 'Working on group {{ ldap_group.cn }} member {{ ldap_group_member }}'
+
+- block:
+
+  - name: 'ensure user {{ ldap_group_member }} exists'
+    community.general.ipa_user:
+      name: '{{ ldap_group_member }}'
+      state: present
+    args: "{{ dest_ipa_auth }}"
+    register: ipa_user_status
+
+  # - debug:
+  #     var: ipa_user_status
+
+  - name: Add user to success list
+    set_fact:
+      dest_ipa_users_success: '{{ dest_ipa_users_success + [ldap_group_member] }}'
+    when: 'not ipa_user_status.failed'
+
+  - name: Add user to changed list
+    set_fact:
+      dest_ipa_users_success: '{{ dest_ipa_users_success + [ldap_group_member] }}'
+    when: 'ipa_user_status.changed'
+
+  - name: Add user to fail list
+    set_fact:
+      dest_ipa_users_fail: '{{ dest_ipa_users_fail + [ldap_group_member] }}'
+    when: 'ipa_user_status.failed'
+
+  when: 'ldap_group_member not in dest_ipa_users_success'

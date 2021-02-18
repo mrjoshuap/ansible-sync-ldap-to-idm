@@ -1,0 +1,49 @@
+# This playbook utilizes the community.general collection
+#
+# To install it use: ansible-galaxy collection install community.general.
+
+
+# References
+# * https://docs.ansible.com/ansible/2.9/collections/community/general/ipa_group_module.html#ansible-collections-community-general-ipa-group-module
+# * https://docs.ansible.com/ansible/2.9/modules/ipa_group_module.html#ansible-collections-community-general-ipa-group-module
+
+
+# - debug:
+#     msg: 'Working on group {{ ldap_group.cn }}'
+
+- block:
+
+  - name: ensure users exist
+    include_tasks: sync_ipa_user.yml
+    loop: '{{ [ldap_group.member] | flatten(1) }}'
+    loop_control:
+      loop_var: ldap_group_member
+
+  - name: ensure group exists and update members
+    community.general.ipa_group:
+      name: '{{ ldap_group.cn }}'
+      user: '{{ [ldap_group.member] | flatten(1) }}'
+      state: present
+    args: "{{ dest_ipa_auth }}"
+    ignore_errors: yes
+    register: ipa_group_status
+
+  # - debug:
+  #     var: ipa_group_status
+
+  - name: Add group to success list
+    set_fact:
+      dest_ipa_groups_success: '{{ dest_ipa_groups_success + [ldap_group.cn] }}'
+    when: 'not ipa_group_status.failed'
+
+  - name: Add group to changed list
+    set_fact:
+      dest_ipa_groups_changed: '{{ dest_ipa_groups_changed + [ldap_group.cn] }}'
+    when: 'ipa_group_status.changed'
+
+  - name: Add group to fail list
+    set_fact:
+      dest_ipa_groups_fail: '{{ dest_ipa_groups_fail + [ldap_group.cn] }}'
+    when: 'ipa_group_status.failed'
+
+  when: 'ldap_group.member is defined'

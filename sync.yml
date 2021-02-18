@@ -1,0 +1,121 @@
+---
+
+# This playbook utilizes the community.general collection
+#
+# To install it use: ansible-galaxy collection install community.general.
+
+
+# References
+# * https://www.freeipa.org/page/HowTo/LDAP
+# * https://docs.ansible.com/ansible/2.9/collections/community/general/
+# * https://docs.ansible.com/ansible/2.9/collections/community/general/ldap_attr_module.html#ansible-collections-community-general-ldap-attr-module
+# * https://docs.ansible.com/ansible/2.9/collections/community/general/ldap_attrs_module.html#ansible-collections-community-general-ldap-attrs-module
+# * https://docs.ansible.com/ansible/2.9/collections/community/general/ldap_entry_module.html#ansible-collections-community-general-ldap-entry-module
+# * https://docs.ansible.com/ansible/2.9/collections/community/general/ldap_passwd_module.html#ansible-collections-community-general-ldap-passwd-module
+# * https://docs.ansible.com/ansible/2.9/collections/community/general/ldap_search_module.html#ansible-collections-community-general-ldap-search-module
+# * https://docs.ansible.com/ansible/2.9/collections/ansible/builtin/copy_module.html
+# * https://docs.ansible.com/ansible/2.9/collections/ansible/builtin/replace_module.html
+
+- name: Sync groups from another directory
+  hosts: localhost
+  connection: local
+
+  vars:
+    src_ldap_auth:
+      bind_dn: uid=admin,cn=users,cn=accounts,dc=demo1,dc=freeipa,dc=org
+      bind_pw: Secret123
+      server_uri: ldap://ipa.demo1.freeipa.org
+      start_tls: yes
+      validate_certs: no
+    src_ldap_base_dn: dc=demo1,dc=freeipa,dc=org
+    src_ldap_groups_dn: 'cn=groups,cn=accounts,{{ src_ldap_base_dn }}'
+    src_ldap_groups_filter: (objectClass=groupofnames)
+    src_ldap_groups_attrs:
+      - cn
+      - description
+      - member
+    src_ldap_users_attr: 'uid'
+    src_ldap_users_dn: 'cn=users,cn=accounts,{{ src_ldap_base_dn }}'
+
+    dest_ipa_auth:
+      ipa_user: admin
+      ipa_pass: Secret123
+      ipa_host: ipa.demo1.freeipa.org
+      validate_certs: no
+
+    # control variables to speed up the flow and for reporting; don't use these
+    dest_ipa_users_success: []
+    dest_ipa_users_changed: []
+    dest_ipa_users_fail: []
+    dest_ipa_groups_success: []
+    dest_ipa_groups_changed: []
+    dest_ipa_groups_fail: []
+
+  tasks:
+
+    - name: pull groups from source ldap
+      community.general.ldap_search:
+        dn: '{{ src_ldap_groups_dn }}'
+        filter: '{{ src_ldap_groups_filter }}'
+        attrs: '{{ src_ldap_groups_attrs }}'
+        scope: children
+      args: '{{ src_ldap_auth }}'
+      register: src_ldap_groups
+
+    # - name: result of community.general.ldap_search from source ldap
+    #   ansible.builtin.debug:
+    #     var: src_ldap_groups
+
+    - name: save source ldap groups search result as yaml
+      ansible.builtin.copy:
+        content: '{{ src_ldap_groups.results | to_nice_yaml }}'
+        dest: '{{ playbook_dir }}/src_ldap_groups.yml'
+
+    - name: copy source ldap groups to destination before fixing group names
+      ansible.builtin.copy:
+        src: '{{ playbook_dir }}/src_ldap_groups.yml'
+        dest: '{{ playbook_dir }}/dest_ipa_groups.yml'
+
+    - name: remove source ldap users base dn
+      ansible.builtin.replace:
+        path: '{{ playbook_dir }}/dest_ipa_groups.yml'
+        regexp: '{{ src_ldap_users_attr }}=(.+),{{ src_ldap_users_dn }}'
+        replace: '\1'
+
+    - name: load dest ldap users from file
+      set_fact:
+        dest_ldap_groups: '{{ lookup("file", playbook_dir + "/dest_ipa_groups.yml") | from_yaml }}'
+
+    # - name: result of fixed groups for destination ldap
+    #   ansible.builtin.debug:
+    #     var: dest_ldap_groups
+
+    - name: process ipa groups
+      include_tasks: sync_ipa_group.yml
+      loop: '{{ dest_ldap_groups }}'
+      loop_control:
+          loop_var: ldap_group
+
+    - name: successfully synced users
+      debug:
+        var: dest_ipa_users_success
+
+    - name: changed users
+      debug:
+        var: dest_ipa_users_changed
+
+    - name: unsuccessful syncing users
+      debug:
+        var: dest_ipa_users_fail
+
+    - name: successfully synced groups
+      debug:
+        var: dest_ipa_groups_success
+
+    - name: changed groups
+      debug:
+        var: dest_ipa_groups_changed
+
+    - name: unsuccessfully synced groups
+      debug:
+        var: dest_ipa_groups_fail
